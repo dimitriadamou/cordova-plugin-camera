@@ -85,6 +85,7 @@ static NSString* MIME_JPEG    = @"image/jpeg";
     pictureOptions.saveToPhotoAlbum = [[command argumentAtIndex:9 withDefault:@(NO)] boolValue];
     pictureOptions.popoverOptions = [command argumentAtIndex:10 withDefault:nil];
     pictureOptions.cameraDirection = [[command argumentAtIndex:11 withDefault:@(UIImagePickerControllerCameraDeviceRear)] unsignedIntegerValue];
+    pictureOptions.textOverlay = [[command argumentAtIndex:12 withDefault:@""] stringValue];
 
     pictureOptions.popoverSupported = NO;
     pictureOptions.usesGeolocation = NO;
@@ -410,6 +411,7 @@ static NSString* MIME_JPEG    = @"image/jpeg";
 - (NSData*) processImage:(UIImage*)image info:(NSDictionary*)info options:(CDVPictureOptions*)options outMime:(NSString**) outMime
 {
     NSData* data = nil;
+    NSString* text = [options.textOverlay copy];
 
     switch (options.encodingType) {
         case EncodingTypePNG:
@@ -477,6 +479,91 @@ static NSString* MIME_JPEG    = @"image/jpeg";
             break;
     };
     
+    // Process image with text overlay if text is provided
+    if(text != nil && ![text isEqualToString:@""] && image != nil) {
+        CGSize imgSize = image.size;
+        
+        // Set default dimensions if not specified
+        int photoWidth = options.targetSize.width > 0 ? options.targetSize.width : imgSize.width;
+        int photoHeight = options.targetSize.height > 0 ? options.targetSize.height : imgSize.height;
+        
+        if(photoWidth != 0 && photoHeight != 0) {
+            CGFloat widthRatio = (CGFloat)photoWidth / imgSize.width;
+            CGFloat heightRatio = (CGFloat)photoHeight / imgSize.height;
+            
+            CGSize newSize;
+            if(widthRatio > heightRatio) {
+                newSize = CGSizeMake(imgSize.width * heightRatio, imgSize.height * heightRatio);
+            } else {
+                newSize = CGSizeMake(imgSize.width * widthRatio, imgSize.height * widthRatio);
+            }
+            
+            CGFloat fontSize = newSize.width / 40;
+            // Set a minimum font size to ensure readability
+            fontSize = MAX(fontSize, 10.0);
+            CGRect rect = CGRectMake(0, 0, newSize.width, newSize.height);
+            NSMutableParagraphStyle* textStyle = NSMutableParagraphStyle.defaultParagraphStyle.mutableCopy;
+            textStyle.alignment = NSTextAlignmentRight;
+            NSDictionary* textFontAttributes = @{NSFontAttributeName: [UIFont fontWithName: @"Helvetica" size: fontSize], NSForegroundColorAttributeName: UIColor.whiteColor, NSParagraphStyleAttributeName: textStyle };
+
+            // Calculate text rect
+            CGSize textSize = [text sizeWithAttributes:textFontAttributes];
+            // Add some padding around the text
+            CGFloat padding = fontSize * 0.8;
+            CGRect textBackgroundRect = CGRectMake(
+                newSize.width - textSize.width - 40 - padding,
+                newSize.height - textSize.height - 40 - padding,
+                textSize.width + (padding * 2),
+                textSize.height + (padding * 2)
+            );
+            
+            CGRect textRect = CGRectMake(
+                textBackgroundRect.origin.x + padding,
+                textBackgroundRect.origin.y + padding,
+                textSize.width,
+                textSize.height
+            );
+            
+            UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0f);
+            CGContextRef context = UIGraphicsGetCurrentContext();
+
+            // Draw the image
+            UIGraphicsPushContext(context);
+            [image drawInRect:rect];
+            UIGraphicsPopContext();
+            
+            // Draw semi-transparent background
+            UIGraphicsPushContext(context);
+            // Set fill color to 50% gray with 50% alpha
+            [[UIColor colorWithWhite:0.5 alpha:0.5] setFill];
+            // Set stroke color to white with 70% alpha for the border
+            [[UIColor colorWithWhite:1.0 alpha:0.7] setStroke];
+            
+            // Create path for rounded rectangle
+            UIBezierPath *path = [UIBezierPath bezierPathWithRoundedRect:textBackgroundRect cornerRadius:padding/2];
+            [path setLineWidth:1.0];
+            [path fill];
+            [path stroke];
+            UIGraphicsPopContext();
+            
+            // Draw the text
+            UIGraphicsPushContext(context);
+            [text drawInRect:textRect withAttributes:textFontAttributes];
+            UIGraphicsPopContext();
+            
+            UIImage *processedImage = UIGraphicsGetImageFromCurrentImageContext();
+            UIGraphicsEndImageContext();
+            
+            // Update the data with the processed image
+            if (processedImage != nil) {
+                if (options.encodingType == EncodingTypePNG) {
+                    data = UIImagePNGRepresentation(processedImage);
+                } else {
+                    data = UIImageJPEGRepresentation(processedImage, [options.quality floatValue] / 100.0f);
+                }
+            }
+        }
+    }
     
     return data;
 }

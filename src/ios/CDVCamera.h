@@ -54,6 +54,7 @@ typedef NSUInteger CDVMediaType;
 @property (assign) BOOL saveToPhotoAlbum;
 @property (strong) NSDictionary* popoverOptions;
 @property (assign) UIImagePickerControllerCameraDevice cameraDirection;
+@property (strong) NSString* textOverlay;
 
 @property (assign) BOOL popoverSupported;
 @property (assign) BOOL usesGeolocation;
@@ -111,5 +112,8 @@ typedef NSUInteger CDVMediaType;
 
 - (void)locationManager:(CLLocationManager*)manager didUpdateToLocation:(CLLocation*)newLocation fromLocation:(CLLocation*)oldLocation;
 - (void)locationManager:(CLLocationManager *)manager didFailWithError:(NSError *)error;
+
+// Process image methods
+- (NSData*)processImage:(UIImage*)image info:(NSDictionary*)info options:(CDVPictureOptions*)options outMime:(NSString**)outMime;
 
 @end
