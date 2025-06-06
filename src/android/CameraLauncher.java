@@ -31,7 +31,11 @@ import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Bitmap.CompressFormat;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.media.ExifInterface;
 import android.media.MediaScannerConnection;
 import android.media.MediaScannerConnection.MediaScannerConnectionClient;
@@ -41,6 +45,10 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import androidx.core.content.FileProvider;
+
+import android.text.Layout;
+import android.text.StaticLayout;
+import android.text.TextPaint;
 import android.util.Base64;
 import android.system.Os;
 import android.system.OsConstants;
@@ -124,6 +132,7 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
     private boolean saveToPhotoAlbum;       // Should the picture be saved to the device's photo album
     private boolean correctOrientation;     // Should the pictures orientation be corrected
     private boolean orientationCorrected;   // Has the picture's orientation been corrected
+    private String textOverlay;
     private boolean allowEdit;              // Should we allow the user to crop the image.
 
     public CallbackContext callbackContext;
@@ -171,6 +180,7 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
             this.allowEdit = args.getBoolean(7);
             this.correctOrientation = args.getBoolean(8);
             this.saveToPhotoAlbum = args.getBoolean(9);
+            this.textOverlay = args.getString(12);
 
             // If the user specifies a 0 or smaller width/height
             // make it -1 so later comparisons succeed
@@ -314,9 +324,9 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
         // Specify file so that large image is captured and returned
         File photo = createCaptureFile(encodingType);
         this.imageUri = FileProvider.getUriForFile(
-            cordova.getActivity(),
-            applicationId + ".cordova.plugin.camera.provider",
-            photo
+                cordova.getActivity(),
+                applicationId + ".cordova.plugin.camera.provider",
+                photo
         );
         intent.putExtra(MediaStore.EXTRA_OUTPUT, imageUri);
         //We can write to this URI, this will hopefully allow us to write files to get to the next step
@@ -563,7 +573,7 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
             else if (destType == FILE_URI) {
                 // If all this is true we shouldn't compress the image.
                 if (this.targetHeight == -1 && this.targetWidth == -1 && this.mQuality == 100 &&
-                    !this.correctOrientation) {
+                        !this.correctOrientation) {
 
                     // If we saved the uncompressed photo to the album, we can just
                     // return the URI we already created
@@ -768,8 +778,8 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
                 // This is a special case to just return the path as no scaling,
                 // rotating, nor compressing needs to be done
                 if (this.targetHeight == -1 && this.targetWidth == -1 &&
-                    destType == FILE_URI && !this.correctOrientation &&
-                    getMimetypeForEncodingType().equalsIgnoreCase(mimeTypeOfGalleryFile)) {
+                        destType == FILE_URI && !this.correctOrientation &&
+                        getMimetypeForEncodingType().equalsIgnoreCase(mimeTypeOfGalleryFile)) {
                     this.callbackContext.success(uriString);
                 } else {
                     try {
@@ -792,8 +802,8 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
                     else if (destType == FILE_URI) {
                         // Did we modify the image?
                         if ((this.targetHeight > 0 && this.targetWidth > 0) ||
-                            (this.correctOrientation && this.orientationCorrected) ||
-                            !mimeTypeOfGalleryFile.equalsIgnoreCase(getMimetypeForEncodingType())) {
+                                (this.correctOrientation && this.orientationCorrected) ||
+                                !mimeTypeOfGalleryFile.equalsIgnoreCase(getMimetypeForEncodingType())) {
                             try {
                                 String modifiedPath = this.outputModifiedBitmap(bitmap, uri, mimeTypeOfGalleryFile);
                                 // The modified image is cached by the app in order to get around this and not have to delete you
@@ -874,7 +884,7 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
      */
     private boolean isImageMimeTypeProcessable(String mimeType) {
         return JPEG_MIME_TYPE.equalsIgnoreCase(mimeType) || PNG_MIME_TYPE.equalsIgnoreCase(mimeType)
-               || HEIC_MIME_TYPE.equalsIgnoreCase(mimeType);
+                || HEIC_MIME_TYPE.equalsIgnoreCase(mimeType);
     }
 
     /**
@@ -922,8 +932,8 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
                 try {
                     if (this.allowEdit) {
                         Uri tmpFile = FileProvider.getUriForFile(cordova.getActivity(),
-                        applicationId + ".cordova.plugin.camera.provider",
-                        createCaptureFile(this.encodingType));
+                                applicationId + ".cordova.plugin.camera.provider",
+                                createCaptureFile(this.encodingType));
                         performCrop(tmpFile, destType, intent);
                     } else {
                         this.processResultFromCamera(destType, intent);
@@ -983,7 +993,7 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
      * @throws IOException
      */
     private void writeUncompressedImage(InputStream fis, Uri dest) throws FileNotFoundException,
-                                                                          IOException {
+            IOException {
         OutputStream os = null;
         try {
             os = this.cordova.getActivity().getContentResolver().openOutputStream(dest);
@@ -1019,11 +1029,95 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
      * @throws IOException
      */
     private void writeUncompressedImage(Uri src, Uri dest) throws FileNotFoundException,
-                                                                  IOException {
+            IOException {
 
         InputStream fis = FileHelper.getInputStreamFromUriString(src.toString(), cordova);
         writeUncompressedImage(fis, dest);
 
+    }
+
+
+    private Bitmap drawTextoverlay(Bitmap image) {
+
+        if(this.textOverlay != null && !this.textOverlay.isEmpty()) {
+            // Create a mutable copy of the bitmap to draw on
+            int finalWidth = image.getWidth();
+            int finalHeight = image.getHeight();
+
+            Bitmap mutableBitmap = image.copy(Bitmap.Config.ARGB_8888, true);
+            Canvas canvas = new Canvas(mutableBitmap);
+
+            // Calculate font size - similar to iOS version
+            float fontSize = finalWidth / 40f;
+            fontSize = Math.max(fontSize, 10f); // Minimum font size
+
+            // Create text paint
+            TextPaint textPaint = new TextPaint(Paint.ANTI_ALIAS_FLAG);
+            textPaint.setColor(Color.WHITE);
+            textPaint.setTextSize(fontSize);
+            textPaint.setTextAlign(Paint.Align.RIGHT);
+
+            // Calculate the width we'll constrain the text layout to
+            int maxTextWidth = finalWidth;
+
+            // First create a StaticLayout to measure the actual height and width
+            StaticLayout measuringLayout = StaticLayout.Builder.obtain(this.textOverlay, 0, this.textOverlay.length(),
+                            textPaint, maxTextWidth)
+                    .setAlignment(Layout.Alignment.ALIGN_OPPOSITE)
+                    .build();
+
+            int textHeight = measuringLayout.getHeight();
+            int textWidth = 0;
+            for (int i = 0; i < measuringLayout.getLineCount(); i++) {
+                textWidth = Math.max(textWidth, (int) measuringLayout.getLineWidth(i));
+            }
+
+            // Padding calculation similar to iOS
+            float padding = fontSize * 0.8f;
+
+            // Create background rectangle for text
+            RectF textBackgroundRect = new RectF(
+                    finalWidth - textWidth - 20 - padding * 2,
+                    finalHeight - textHeight - 20 - padding * 2,
+                    finalWidth - 20,
+                    finalHeight - 20
+            );
+
+            // Draw the semi-transparent background
+            Paint backgroundPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            backgroundPaint.setColor(Color.GRAY);
+            backgroundPaint.setAlpha(128); // 50% transparency
+            backgroundPaint.setStyle(Paint.Style.FILL);
+            canvas.drawRoundRect(textBackgroundRect, padding/2, padding/2, backgroundPaint);
+
+            // Draw the border
+            Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            borderPaint.setColor(Color.WHITE);
+            borderPaint.setAlpha(179); // 70% opacity
+            borderPaint.setStyle(Paint.Style.STROKE);
+            borderPaint.setStrokeWidth(1f);
+            canvas.drawRoundRect(textBackgroundRect, padding/2, padding/2, borderPaint);
+
+            // Draw the text - create a new StaticLayout specifically for the background rect
+            StaticLayout textLayout = StaticLayout.Builder.obtain(this.textOverlay, 0, this.textOverlay.length(),
+                            textPaint, textWidth)
+                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                    .build();
+
+            canvas.save();
+            // Translate to the left edge of the text background rect plus padding
+            canvas.translate(
+                    textBackgroundRect.right - padding,
+                    textBackgroundRect.top + padding / 2
+            );
+            textLayout.draw(canvas);
+            canvas.restore();
+
+            // Replace the original bitmap with our modified one
+            image = mutableBitmap;
+        }
+
+        return image;
     }
 
     /**
@@ -1044,7 +1138,7 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
             } catch (Exception e) {
                 callbackContext.error(e.getLocalizedMessage());
             }
-            return image;
+            return drawTextoverlay(image);
         }
 
         int rotate = 0;
@@ -1128,7 +1222,8 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
                 this.orientationCorrected = false;
             }
         }
-        return scaledBitmap;
+
+        return drawTextoverlay(scaledBitmap);
     }
 
     /**
@@ -1245,9 +1340,9 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
         try {
             if (bitmap.compress(compressFormat, mQuality, dataStream)) {
                 StringBuilder sb = new StringBuilder()
-                    .append("data:")
-                    .append(encodingType == PNG ? PNG_MIME_TYPE : JPEG_MIME_TYPE)
-                    .append(";base64,");
+                        .append("data:")
+                        .append(encodingType == PNG ? PNG_MIME_TYPE : JPEG_MIME_TYPE)
+                        .append(";base64,");
                 byte[] code = dataStream.toByteArray();
                 byte[] output = Base64.encode(code, Base64.NO_WRAP);
                 sb.append(new String(output));
@@ -1326,6 +1421,7 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
         state.putBoolean("allowEdit", this.allowEdit);
         state.putBoolean("correctOrientation", this.correctOrientation);
         state.putBoolean("saveToPhotoAlbum", this.saveToPhotoAlbum);
+        state.putString("textOverlay", this.textOverlay);
 
         if (this.croppedUri != null) {
             state.putString(CROPPED_URI_KEY, this.croppedFilePath);
@@ -1349,6 +1445,7 @@ public class CameraLauncher extends CordovaPlugin implements MediaScannerConnect
         this.allowEdit = state.getBoolean("allowEdit");
         this.correctOrientation = state.getBoolean("correctOrientation");
         this.saveToPhotoAlbum = state.getBoolean("saveToPhotoAlbum");
+        this.textOverlay = state.getString("textOverlay");
 
         if (state.containsKey(CROPPED_URI_KEY)) {
             this.croppedUri = Uri.parse(state.getString(CROPPED_URI_KEY));
